@@ -1,0 +1,82 @@
+experiment:
+  name: heterogeneous_10agents_o35_gemini5
+  description: 'Heterogeneous agent experiment with 10 agents.
+
+    Configuration: 5 o3, 5 gemini
+
+    Breakdown: 10 LLM agents, 0 perfect agents
+
+    Mode: Mixed-mode configuration (LLM vs perfect agents)'
+  num_runs: 5
+  parallel: true
+  max_workers: 5
+  tags:
+  - heterogeneous
+  - mixed-agents
+  - gemini
+  - o3
+simulation_config:
+  simulation:
+    rounds: 20
+    agents: 10
+    show_full_revenue: true
+    report_frequency: 0
+    truncate_context: true
+  agents:
+    model: o3
+    uncooperative_count: 0
+    competitive_count: 0
+    mode: mixed
+    agent_modes:
+      agent_1: llm
+      agent_2: llm
+      agent_3: llm
+      agent_4: llm
+      agent_5: llm
+      agent_6: llm
+      agent_7: llm
+      agent_8: llm
+      agent_9: llm
+      agent_10: llm
+  tasks:
+    min_info_pieces: 4
+    max_info_pieces: 4
+    initial_tasks_per_agent: 2
+    new_task_on_completion: true
+    task_templates:
+    - Calculate the quarterly revenue by combining {info_pieces}
+    - Prepare the report using data from {info_pieces}
+    - Analyze the trend by comparing {info_pieces}
+    - Create forecast based on {info_pieces}
+    - Validate the budget using {info_pieces}
+  information:
+    total_pieces: 200
+    pieces_per_agent: 10
+    unique_distribution: false
+    info_templates:
+    - Q{n} sales data
+    - Customer segment {n} analysis
+    - Product {n} performance metrics
+    - Region {n} market data
+    - Department {n} budget
+  revenue:
+    task_completion: 10000
+    bonus_for_first: 0
+    incorrect_value_penalty: 0.5
+    information_sharing: 0
+  communication:
+    max_actions_per_turn: -1
+  logging:
+    log_all_messages: true
+    log_agent_reasoning: true
+    log_task_attempts: true
+analysis:
+  key_metrics:
+  - total_tasks_completed
+  - revenue_distribution.gini_coefficient
+  - communication_efficiency.messages_per_completed_task
+  - agents_with_zero_revenue
+  - network_hub_analysis.hub_concentration
+  - per_agent_metrics
+  generate_plots: true
+  generate_report: true
