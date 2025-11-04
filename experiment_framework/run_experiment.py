@@ -182,11 +182,13 @@ class ExperimentRunner:
             self.logger.info(f"Created new experiment: {self.experiment_id}")
     
     def _generate_experiment_id(self) -> str:
-        """Generate unique experiment ID"""
+        """Generate unique experiment ID with timestamp"""
         # Get next experiment number from registry
         exp_num = self.registry.get_next_experiment_number()
         name = self.config['experiment']['name'].lower().replace(' ', '_')
-        return f"exp_{exp_num:03d}_{name}"
+        # Add timestamp to make each experiment run unique
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        return f"exp_{exp_num:03d}_{name}_{timestamp}"
     
     def _setup_logging(self) -> logging.Logger:
         """Setup logging for the experiment"""
