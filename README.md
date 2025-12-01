@@ -11,10 +11,18 @@
 
 3. **Install dependencies**:
    ```bash
-   pip install openai anthropic pyyaml numpy matplotlib
-   # Or use the requirements file:
    pip install -r information_asymmetry_simulation/requirements.txt
    ```
+   Or install manually:
+   ```bash
+   pip install openai anthropic pyyaml numpy scipy pandas matplotlib
+   ```
+
+4. **Validate your setup** (recommended before running experiments):
+   ```bash
+   python validate_setup.py
+   ```
+   This checks all dependencies, API keys, and runs a quick test with perfect mode.
 
 ## Available Models
 
@@ -109,5 +117,18 @@ Agent types script additional options:
 - `--rounds`: Simulation rounds (default: 20)
 - `--revenue`: Visibility mode (`full` or `limited`)
 - `--preset`: Quick configurations
+
+## Quick Start: Run All Experiments
+
+To run all experiments listed above with a single command:
+
+```bash
+python run_all_experiments.py
+```
+
+This will sequentially run all agent types and heterogeneous model experiments. Use `--help` for options:
+- `--dry-run`: Show what would be run without executing
+- `--skip-validation`: Skip the preflight validation check
+- `--models`: Specify which models to use (default: excludes gemini)
 
 ---

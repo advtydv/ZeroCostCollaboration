@@ -33,9 +33,17 @@ def run_single_simulation_static(run_number: int, experiment_dir: Path, experime
     run_id = f"run_{run_number:03d}"
     run_dir = experiment_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Setup simple logger for this process
+
+    # Setup logger for this process WITH handlers (critical for subprocess visibility)
     logger = logging.getLogger(f"exp_runner_{run_id}")
+    logger.setLevel(logging.INFO)
+    # Clear any existing handlers to avoid duplicates
+    logger.handlers = []
+    # Add console handler so errors are visible to user
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(console_handler)
     
     # Check if this run already completed
     results_file = run_dir / "results.yaml"
@@ -77,9 +85,15 @@ def run_single_simulation_static(run_number: int, experiment_dir: Path, experime
             env=env,
             cwd=str(Path(__file__).parent.parent / "information_asymmetry_simulation")
         )
-        
+
         duration = time.time() - start_time
-        
+
+        # CRITICAL: Always print subprocess output so errors are visible to user
+        if process.stdout:
+            print(process.stdout)
+        if process.stderr:
+            print(process.stderr, file=sys.stderr)
+
         if process.returncode == 0:
             # Load results
             sim_results_file = run_dir / "simulation" / "results.yaml"
@@ -434,10 +448,18 @@ class ExperimentRunner:
         # Update final metadata
         self.metadata['status'] = 'completed'
         self.metadata['completed_at'] = datetime.now().isoformat()
-        self.metadata['aggregate_metrics_summary'] = {
-            'avg_gini': aggregate_metrics['statistical_summary'].get('revenue_distribution.gini_coefficient', {}).get('mean'),
-            'avg_tasks_completed': aggregate_metrics['statistical_summary'].get('total_tasks_completed', {}).get('mean')
-        }
+        # Handle case where no runs succeeded (statistical_summary may not exist)
+        if 'statistical_summary' in aggregate_metrics:
+            self.metadata['aggregate_metrics_summary'] = {
+                'avg_gini': aggregate_metrics['statistical_summary'].get('revenue_distribution.gini_coefficient', {}).get('mean'),
+                'avg_tasks_completed': aggregate_metrics['statistical_summary'].get('total_tasks_completed', {}).get('mean')
+            }
+        else:
+            self.metadata['aggregate_metrics_summary'] = {
+                'avg_gini': None,
+                'avg_tasks_completed': None,
+                'error': aggregate_metrics.get('error', 'No successful runs')
+            }
         self._save_metadata()
         
         # Update registry
