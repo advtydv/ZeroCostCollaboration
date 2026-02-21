@@ -120,15 +120,38 @@ Agent types script additional options:
 
 ## Quick Start: Run All Experiments
 
-To run all experiments listed above with a single command:
+Run all experiments with a single command:
 
 ```bash
 python run_all_experiments.py
 ```
 
-This will sequentially run all agent types and heterogeneous model experiments. Use `--help` for options:
-- `--dry-run`: Show what would be run without executing
-- `--skip-validation`: Skip the preflight validation check
-- `--models`: Specify which models to use (default: excludes gemini)
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Show what would run without executing |
+| `--list` | List all experiments with enabled/disabled status |
+| `--skip-validation` | Skip environment validation check |
+| `--continue-on-error` | Keep running even if an experiment fails |
+
+### Customizing Experiments
+
+The script has an **easy-to-edit configuration section** at the top. To customize which experiments run:
+
+1. Open `run_all_experiments.py`
+2. Find the `EXPERIMENTS = [...]` list near the top
+3. To disable an experiment: set `'enabled': False`
+4. To add new experiments: copy an existing entry and modify the command
+5. To remove experiments: delete the entry or set `'enabled': False`
+
+Example experiment entry:
+```python
+{
+    'name': 'Heterogeneous: Half O3, Half Claude',
+    'command': ['python', 'run_heterogeneous_experiments.py', '-o3', '5', '-claude', '5'],
+    'enabled': True,  # Set to False to skip this experiment
+},
+```
 
 ---

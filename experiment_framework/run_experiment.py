@@ -76,23 +76,36 @@ def run_single_simulation_static(run_number: int, experiment_dir: Path, experime
     ]
     
     try:
-        # Run simulation
+        # Run simulation with real-time output streaming
         env = os.environ.copy()
-        process = subprocess.run(
+        
+        # Use Popen for real-time output instead of buffered subprocess.run
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Combine stderr into stdout for unified streaming
             text=True,
             env=env,
-            cwd=str(Path(__file__).parent.parent / "information_asymmetry_simulation")
+            cwd=str(Path(__file__).parent.parent / "information_asymmetry_simulation"),
+            bufsize=1  # Line buffered for real-time output
         )
+        
+        # Stream output in real-time
+        output_lines = []
+        try:
+            for line in process.stdout:
+                print(line, end='', flush=True)  # Real-time display
+                output_lines.append(line)
+        except Exception as read_error:
+            logger.warning(f"Error reading subprocess output: {read_error}")
+        
+        # Wait for process to complete (no timeout - experiments can be long-running)
+        process.wait()
 
         duration = time.time() - start_time
 
-        # CRITICAL: Always print subprocess output so errors are visible to user
-        if process.stdout:
-            print(process.stdout)
-        if process.stderr:
-            print(process.stderr, file=sys.stderr)
+
+
 
         if process.returncode == 0:
             # Load results
