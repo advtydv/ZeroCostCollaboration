@@ -62,27 +62,18 @@ class SimulationManager:
         # Determine agent types
         uncooperative_count = self.config['agents'].get('uncooperative_count', 0)
         competitive_count = self.config['agents'].get('competitive_count', 0)
-        policy_count = self.config['agents'].get('policy_count', 0)
         
         # Validate counts
-        total_special = uncooperative_count + competitive_count + policy_count
+        total_special = uncooperative_count + competitive_count
         if total_special > num_agents:
             self.logger.warning(f"Total special agents ({total_special}) exceeds total agents ({num_agents}), adjusting...")
             # Scale down proportionally
             if total_special > 0:
                 uncooperative_count = int(uncooperative_count * num_agents / total_special)
                 competitive_count = int(competitive_count * num_agents / total_special)
-                policy_count = int(policy_count * num_agents / total_special)
-                # Ensure we don't exceed total after integer rounding
-                while uncooperative_count + competitive_count + policy_count > num_agents:
-                    if policy_count > 0:
-                        policy_count -= 1
-                    elif competitive_count > 0:
-                        competitive_count -= 1
-                    elif uncooperative_count > 0:
-                        uncooperative_count -= 1
-                    else:
-                        break
+                # Ensure we don't exceed total
+                if uncooperative_count + competitive_count > num_agents:
+                    competitive_count = num_agents - uncooperative_count
         
         # Randomly assign agent types
         all_indices = list(range(num_agents))
@@ -90,12 +81,6 @@ class SimulationManager:
         
         uncooperative_indices = set(all_indices[:uncooperative_count])
         competitive_indices = set(all_indices[uncooperative_count:uncooperative_count + competitive_count])
-        policy_indices = set(
-            all_indices[
-                uncooperative_count + competitive_count:
-                uncooperative_count + competitive_count + policy_count
-            ]
-        )
         
         # Distribute information among agents
         info_distribution = self.info_manager.distribute_information(num_agents)
@@ -106,8 +91,6 @@ class SimulationManager:
                 agent_type = "uncooperative"
             elif i in competitive_indices:
                 agent_type = "competitive"
-            elif i in policy_indices:
-                agent_type = "policy"
             else:
                 agent_type = "neutral"
             
@@ -116,8 +99,6 @@ class SimulationManager:
             
             # Get mode from config (default to 'llm' if not specified)
             global_mode = self.config['agents'].get('mode', 'llm')
-            agent_models = self.config['agents'].get('agent_models', {})
-            agent_config = dict(self.config['agents'])
             
             # Determine agent-specific mode
             if global_mode == 'mixed':
@@ -128,16 +109,10 @@ class SimulationManager:
             else:
                 # Use global mode for all agents
                 mode = global_mode
-
-            # In mixed mode, allow each LLM agent to use a distinct model.
-            if mode == 'llm':
-                model_override = agent_models.get(agent_id)
-                if model_override:
-                    agent_config['model'] = model_override
             
             agent = Agent(
                 agent_id=agent_id,
-                config=agent_config,
+                config=self.config['agents'],
                 initial_info=info_distribution[i],
                 communication_system=self.communication,
                 revenue_system=self.revenue_system,
@@ -215,10 +190,16 @@ class SimulationManager:
         report_freq = self.config.get('simulation', {}).get('report_frequency', 3)
         is_report_round = (report_freq > 0 and self.current_round % report_freq == 0)
         
+        # Get automation mode
+        automation_mode = self.config.get('simulation', {}).get('automation_mode', 'none')
+        
         # Randomize agent turn order for this round
         agent_order = list(self.agents.keys())
         random.shuffle(agent_order)
         self.logger.info(f"Round {self.current_round} turn order: {', '.join(agent_order)}")
+        
+        # Track actions for automation processing
+        all_agent_actions = {}
         
         # Each agent takes their turn (normal actions first)
         for agent_id in agent_order:
@@ -235,6 +216,7 @@ class SimulationManager:
                     self.logger.warning(f"Agent {agent_id} tried to take {len(actions)} actions, limiting to {max_actions}")
                     actions = actions[:max_actions]  # Truncate to max allowed
                 
+                all_agent_actions[agent_id] = actions  # Store for automation processing
                 round_results['agent_actions'][agent_id] = actions
                 
                 # Extract overall private thoughts if available
@@ -253,28 +235,67 @@ class SimulationManager:
                         'thoughts': overall_thoughts
                     })
                 
-                # Process each action
-                for i, action in enumerate(actions):
-                    # Skip report actions as they're handled separately
-                    if action['action'] == 'submit_report':
-                        continue
+                # Process actions based on automation mode
+                if automation_mode == 'automated_request':
+                    # Filter out send_message actions but process others
+                    for i, action in enumerate(actions):
+                        if action['action'] == 'submit_report':
+                            continue
                         
-                    # Log each action
-                    self.sim_logger.log_agent_action(agent_id, self.current_round, action)
-                    
-                    # Process action
-                    action_result = self._process_action(agent_id, action)
-                    
-                    if action['action'] == 'submit_task' and action_result['success']:
-                        round_results['tasks_completed'] += 1
-                    elif action['action'] in ['send_message', 'broadcast']:
-                        round_results['messages_sent'] += 1
-
-                # PERFECT MODE OPTIMIZATION: Instant fulfillment of information requests
-                # This ONLY applies when the requesting agent is in perfect mode
-                if agent.mode == "perfect" and actions:
-                    self._instant_fulfill_perfect_requests(agent_id, actions)
-
+                        # Log action but only process non-message actions
+                        self.sim_logger.log_agent_action(agent_id, self.current_round, action)
+                        
+                        if action['action'] != 'send_message':
+                            # Process non-message actions normally
+                            action_result = self._process_action(agent_id, action)
+                            
+                            if action['action'] == 'submit_task' and action_result['success']:
+                                round_results['tasks_completed'] += 1
+                        else:
+                            # Message actions are logged but not processed
+                            self.logger.debug(f"Automated request mode: Ignoring message from {agent_id}")
+                            
+                elif automation_mode == 'automated_fulfill':
+                    # Process all actions normally (will handle fulfillment later)
+                    for i, action in enumerate(actions):
+                        if action['action'] == 'submit_report':
+                            continue
+                            
+                        # Log each action
+                        self.sim_logger.log_agent_action(agent_id, self.current_round, action)
+                        
+                        # Process action
+                        action_result = self._process_action(agent_id, action)
+                        
+                        if action['action'] == 'submit_task' and action_result['success']:
+                            round_results['tasks_completed'] += 1
+                        elif action['action'] in ['send_message', 'broadcast']:
+                            round_results['messages_sent'] += 1
+                            
+                            # For automated_fulfill, check if we need to auto-send information
+                            if automation_mode == 'automated_fulfill' and action['action'] == 'send_message':
+                                self._process_automated_fulfillment(agent_id, action['to'], action['content'])
+                else:
+                    # Normal mode - process all actions
+                    for i, action in enumerate(actions):
+                        if action['action'] == 'submit_report':
+                            continue
+                            
+                        # Log each action
+                        self.sim_logger.log_agent_action(agent_id, self.current_round, action)
+                        
+                        # Process action
+                        action_result = self._process_action(agent_id, action)
+                        
+                        if action['action'] == 'submit_task' and action_result['success']:
+                            round_results['tasks_completed'] += 1
+                        elif action['action'] in ['send_message', 'broadcast']:
+                            round_results['messages_sent'] += 1
+        
+        # After all agents have taken their turn, handle automated requests
+        if automation_mode == 'automated_request':
+            self._process_automated_requests()
+        
         # After all normal actions are complete, collect strategic reports if this is a report round
         if is_report_round:
             self.logger.info(f"Round {self.current_round}: Requesting strategic reports from all agents (after actions)")
@@ -476,18 +497,6 @@ class SimulationManager:
         }
         self.sim_logger.log_information_exchange(from_agent, to_agent, exchange_details)
         
-        # Award revenue for information sharing if configured
-        sharing_reward = self.config['revenue'].get('information_sharing', 0)
-        if sharing_reward > 0 and transferred:
-            pieces_count = len(transferred)
-            revenue_earned = self.revenue_system.award_revenue(
-                from_agent,
-                'information_sharing',
-                self.current_round,
-                pieces_count=pieces_count
-            )
-            self.logger.info(f"Agent {from_agent} earned ${revenue_earned:,} for sharing {pieces_count} information pieces")
-
         # Track this exchange in recent history (only if full transparency is enabled)
         if transferred and self.config['simulation'].get('show_full_revenue', True):
             exchange_record = {
@@ -498,15 +507,15 @@ class SimulationManager:
                 'pieces': transferred  # Could hide this for partial transparency
             }
             self.recent_exchanges.append(exchange_record)
-
+            
             # Keep only the most recent exchanges
             if len(self.recent_exchanges) > self.max_recent_exchanges:
                 self.recent_exchanges.pop(0)
-
+            
             # Send a notification message
             notification = f"Received information from {from_agent}: {', '.join(transferred)}"
             self.communication.send_message('system', to_agent, notification)
-
+        
         return {'success': True, 'transferred': transferred}
     
     def _process_task_submission(self, agent_id: str, answer: Any) -> Dict[str, Any]:
@@ -808,91 +817,95 @@ class SimulationManager:
                 self.logger.info(f"  {agent_id}: mean={stats['mean']:.1f}, "
                                f"median={stats['median']}, range={stats['min']}-{stats['max']}, "
                                f"self={stats['self_assessment'] or 'N/A'}")
-
-    def _instant_fulfill_perfect_requests(self, requester_id: str, actions: List[Dict[str, Any]]):
-        """
-        Instantly fulfill information requests between perfect agents.
-        This optimization allows perfect agents to receive requested information immediately
-        rather than waiting for the responding agent's turn.
-
-        IMPORTANT: This ONLY applies when BOTH requester and responder are in perfect mode.
-        LLM agents and mixed configurations are completely unaffected.
-
-        Args:
-            requester_id: The agent making the requests
-            actions: List of actions taken by the requester
-        """
-        requester = self.agents[requester_id]
-
-        # Only process if requester is in perfect mode (double-check)
-        if requester.mode != "perfect":
+    
+    def _process_automated_requests(self):
+        """Generate and send automated information requests for all agents"""
+        self.logger.info("Processing automated requests for all agents")
+        
+        # For each agent, determine what information they need
+        for agent_id, agent in self.agents.items():
+            needed_info = set()
+            
+            # Check all tasks for missing information
+            for task in agent.tasks:
+                required_info = set(task['required_info'])
+                agent_info_names = {piece.name for piece in agent.information}
+                missing_info = required_info - agent_info_names
+                needed_info.update(missing_info)
+            
+            # For each needed piece, find who has it and send a request
+            for info_piece in needed_info:
+                # Find the first agent who has this information
+                info_holder = None
+                for other_id, other_agent in self.agents.items():
+                    if other_id != agent_id:
+                        other_info_names = {piece.name for piece in other_agent.information}
+                        if info_piece in other_info_names:
+                            info_holder = other_id
+                            break
+                
+                if info_holder:
+                    # Send an automated request message
+                    request_message = f"I need {info_piece} to complete my task. Could you please share it?"
+                    self.communication.send_message(agent_id, info_holder, request_message)
+                    self.logger.debug(f"Auto-request: {agent_id} -> {info_holder} for {info_piece}")
+                    
+                    # Log the automated request
+                    auto_action = {
+                        'action': 'send_message',
+                        'to': info_holder,
+                        'content': request_message,
+                        '_automated': True  # Mark as automated
+                    }
+                    self.sim_logger.log_agent_action(agent_id, self.current_round, auto_action)
+    
+    def _process_automated_fulfillment(self, requester_id: str, recipient_id: str, message_content: str):
+        """Automatically fulfill information requests by parsing message content"""
+        self.logger.debug(f"Processing automated fulfillment for message from {requester_id} to {recipient_id}")
+        
+        # Get the recipient agent (who received the request)
+        recipient_agent = self.agents.get(recipient_id)
+        if not recipient_agent:
             return
-
-        # Track what was instantly fulfilled for logging
-        instant_transfers = []
-
-        for action in actions:
-            # Check if this is an information request message
-            if action['action'] == 'send_message' and 'REQUEST:' in action.get('content', ''):
-                target_id = action['to']
-                target = self.agents.get(target_id)
-
-                # CRITICAL: Only instant-fulfill if BOTH agents are in perfect mode
-                # This ensures LLM agents are completely unaffected
-                if target and target.mode == "perfect":
-                    # Parse the requested information from the message
-                    content = action['content']
-                    if "REQUEST:" in content:
-                        # Extract the information name from "REQUEST: [info] for [task]"
-                        parts = content.split("REQUEST:")[1].split(" for ")
-                        if parts:
-                            requested_info_name = parts[0].strip()
-
-                            # Check if target agent has this information
-                            target_has_info = False
-                            target_piece = None
-
-                            for piece in target.information:
-                                if piece.name == requested_info_name:
-                                    target_has_info = True
-                                    target_piece = piece
-                                    break
-
-                            if target_has_info and target_piece:
-                                # Check if target hasn't already responded to this request
-                                # (prevents double-fulfillment if somehow called twice)
-                                if (requester_id, requested_info_name) not in target.perfect_responded:
-                                    # Use the existing information transfer mechanism
-                                    # This ensures all logging, tracking, and validation work correctly
-                                    transfer_result = self._process_information_transfer(
-                                        from_agent=target_id,
-                                        to_agent=requester_id,
-                                        information=[requested_info_name],
-                                        custom_values={requested_info_name: target_piece.value}
-                                    )
-
-                                    if transfer_result['success']:
-                                        # Mark as already responded in target's tracking
-                                        # This prevents the target from trying to respond again during their turn
-                                        target.perfect_responded.add((requester_id, requested_info_name))
-
-                                        # Track for logging
-                                        instant_transfers.append({
-                                            'from': target_id,
-                                            'to': requester_id,
-                                            'info': requested_info_name,
-                                            'value': target_piece.value
-                                        })
-
-                                        # Log the instant fulfillment
-                                        self.logger.info(
-                                            f"INSTANT TRANSFER (perfect mode): '{requested_info_name}' "
-                                            f"from {target_id} to {requester_id} (value: {target_piece.value})"
-                                        )
-
-        # Log summary of instant transfers if any occurred
-        if instant_transfers:
-            self.logger.info(
-                f"Perfect mode instant fulfillment: {requester_id} received {len(instant_transfers)} "
-                f"information pieces immediately after requesting them"
+        
+        # Get all information pieces the recipient has
+        recipient_info_names = {piece.name for piece in recipient_agent.information}
+        
+        # Parse the message for information piece names
+        found_pieces = []
+        found_piece_objects = []
+        
+        # Check each piece the recipient has to see if it's mentioned in the message
+        for piece in recipient_agent.information:
+            # Check for exact match or close match in the message
+            if piece.name.lower() in message_content.lower():
+                found_pieces.append(piece.name)
+                found_piece_objects.append(piece)
+                self.logger.debug(f"Found requested piece '{piece.name}' in message")
+        
+        # If we found any requested pieces, auto-send them
+        if found_pieces:
+            # Create values dictionary with original values
+            values_dict = {piece.name: piece.value for piece in found_piece_objects}
+            
+            # Process the automated information transfer
+            # Note: The transfer is FROM the recipient TO the requester
+            transfer_result = self._process_information_transfer(
+                recipient_id,  # FROM: The one who has the info
+                requester_id,  # TO: The one who requested it
+                found_pieces,  # The pieces to transfer
+                values_dict    # Original values (no manipulation)
             )
+            
+            if transfer_result['success']:
+                self.logger.info(f"Auto-fulfilled: {recipient_id} -> {requester_id}: {found_pieces}")
+                
+                # Log the automated action
+                auto_action = {
+                    'action': 'send_information',
+                    'to': requester_id,
+                    'information': found_pieces,
+                    'values': values_dict,
+                    '_automated': True  # Mark as automated
+                }
+                self.sim_logger.log_agent_action(recipient_id, self.current_round, auto_action)

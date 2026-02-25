@@ -1,0 +1,62 @@
+# Information Asymmetry Simulation Configuration - Perfect Agents (Fair Comparison)
+# This configuration runs agents in "perfect" mode with same settings as automated tests
+
+simulation:
+  rounds: 20
+  agents: 10
+  show_full_revenue: true
+  report_frequency: 0
+  automation_mode: "none"  # No automation, just perfect agents
+  
+agents:
+  # Agent mode configuration
+  mode: "perfect"  # Hard-coded optimal behavior
+  
+  # Perfect agent configuration
+  perfect_strategy:
+    request_strategy: "all"
+    response_delay: 0
+    submission_delay: 0
+  
+  # LLM configuration (not used but needed for structure)
+  model: "o3-mini-2025-01-31"
+  uncooperative_count: 0
+  competitive_count: 0
+  
+tasks:
+  min_info_pieces: 4
+  max_info_pieces: 4
+  initial_tasks_per_agent: 2
+  new_task_on_completion: true
+  
+  task_templates:
+    - "Calculate the quarterly revenue by combining {info_pieces}"
+    - "Prepare the report using data from {info_pieces}"
+    - "Analyze the trend by comparing {info_pieces}"
+    - "Create forecast based on {info_pieces}"
+    - "Validate the budget using {info_pieces}"
+  
+information:
+  total_pieces: 40
+  pieces_per_agent: 6  # SAME AS AUTOMATED TESTS (not 4!)
+  unique_distribution: false
+  
+  info_templates:
+    - "Q{n} sales data"
+    - "Customer segment {n} analysis"
+    - "Product {n} performance metrics"
+    - "Region {n} market data"
+    - "Department {n} budget"
+  
+revenue:
+  task_completion: 10000
+  bonus_for_first: 2000
+  incorrect_value_penalty: 0.5
+  
+communication:
+  max_actions_per_turn: -1
+  
+logging:
+  log_all_messages: true
+  log_agent_reasoning: true
+  log_task_attempts: true

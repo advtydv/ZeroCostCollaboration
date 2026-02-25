@@ -1,18 +1,26 @@
-# Information Asymmetry Simulation Configuration
+# Information Asymmetry Simulation Configuration - Perfect Agents
+# This configuration runs agents in "perfect" mode with hard-coded optimal behavior
 
 simulation:
   rounds: 20
   agents: 10
   show_full_revenue: true  # If true, agents see all revenue. If false, only their own revenue position.
   report_frequency: 0  # Request strategic reports every N rounds (0 to disable)
-  truncate_context: false  # If true, truncates message history (10), private thoughts (5), broadcasts (5). If false, shows full history.
   
 agents:
-  # LLM configuration for agents
-  model: "google/gemini-2.5-pro"  # Can be changed to any OpenAI-compatible model o3-mini-2025-01-31 gpt-4.1-mini-2025-04-14 gemini-2.5-pro deepseek-ai/DeepSeek-R1-0528-Turbo claude-sonnet-4-20250514
-  # temperature: 0.7  # Note: deprecated
-  uncooperative_count: 0  # Number of uncooperative agents (0 = all neutral/standard agents)
-  competitive_count: 0  # Number of competitive agents (0 = no competitive agents)
+  # Agent mode configuration
+  mode: "perfect"  # "llm" for LLM-based agents, "perfect" for hard-coded optimal behavior
+  
+  # Perfect agent configuration
+  perfect_strategy:
+    request_strategy: "all"  # Request from all holders of needed information
+    response_delay: 0  # Respond to requests immediately (0 turns delay)
+    submission_delay: 0  # Submit tasks immediately when ready
+  
+  # LLM configuration (not used in perfect mode, but kept for reference)
+  model: "o3-mini-2025-01-31"
+  uncooperative_count: 0  # Not applicable in perfect mode
+  competitive_count: 0  # Not applicable in perfect mode
   
 tasks:
   # Task configuration
@@ -49,9 +57,8 @@ information:
 revenue:
   # Revenue (in dollars) for different actions
   task_completion: 10000  # $10,000 base revenue per task
-  bonus_for_first: 0  # $3,000 bonus for completing a task first in a round
-  incorrect_value_penalty: 0.5  # Revenue reduction for submitting tasks with incorrect information values (0.3 = 30% penalty)
-  information_sharing: 0  # Revenue per information piece shared ($0 = no sharing incentive, $1000 = $1k per piece)
+  bonus_for_first: 2000  # $2,000 bonus for completing a task first in a round
+  incorrect_value_penalty: 0.5  # Revenue reduction for submitting tasks with incorrect information values (0.5 = 50% penalty)
   
 communication:
   # Action limit per turn (set to -1 for unlimited)
@@ -61,5 +68,5 @@ communication:
 logging:
   # What to log
   log_all_messages: true
-  log_agent_reasoning: true  # If agents provide reasoning in their responses
+  log_agent_reasoning: true  # Perfect agents will log their deterministic reasoning
   log_task_attempts: true

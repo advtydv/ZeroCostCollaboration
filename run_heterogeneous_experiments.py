@@ -2,9 +2,8 @@
 """
 Run experiments with heterogeneous agent groups where different agents can use different models.
 
-NOTE: The current simulation supports mixed modes (LLM vs perfect) but all LLM agents share
-the same model. This script provides a structure for heterogeneous models that could work
-with simulation extensions or can be used to generate appropriate mixed-mode configurations.
+This script configures mixed mode (LLM vs perfect) and writes per-agent model overrides
+via agents.agent_models so LLM agents can use different models in the same run.
 """
 
 import argparse
@@ -22,9 +21,15 @@ MODEL_SHORTCUTS = {
     'o3': 'o3',
     'gpt41mini': 'gpt-4.1-mini',
     'gpt5mini': 'gpt-5-mini',
+    'gpt52': 'gpt-5.2-2025-12-11',
+    'gpt5_2': 'gpt-5.2-2025-12-11',
+    'gpt-5.2': 'gpt-5.2-2025-12-11',
     'deepseek': 'deepseek-ai/DeepSeek-R1-0528-Turbo',
     'claude': 'claude-sonnet-4-20250514',
     'claudesonnet': 'claude-sonnet-4-20250514',
+    'claudeopus46': 'claude-opus-4-6',
+    'opus46': 'claude-opus-4-6',
+    'claude-opus-4.6': 'claude-opus-4-6',
     'gemini': 'google/gemini-2.5-pro',
     'gemini25': 'google/gemini-2.5-pro',
     'gemini25pro': 'google/gemini-2.5-pro',
@@ -100,10 +105,20 @@ def create_experiment_name(configs: List[Tuple[str, int]], total_agents: int) ->
     name_suffix = "_".join(parts)
     return f"heterogeneous_{total_agents}agents_{name_suffix}"
 
+def get_latest_experiment_path(output_dir: str) -> Optional[Path]:
+    """Get the latest experiment folder path under experiments/output_dir."""
+    experiments_root = Path("experiments") / output_dir
+    if not experiments_root.exists():
+        return None
+    candidates = [p for p in experiments_root.iterdir() if p.is_dir() and p.name.startswith("exp_")]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
 def create_mixed_mode_config(base_config_path: Path, agent_specs: List[Dict[str, str]]) -> dict:
     """
     Create a configuration for mixed-mode simulation.
-    This works with the current simulation that supports mixed LLM/perfect modes.
+    Supports per-agent mode assignment and per-agent model assignment.
     """
     # Load base config
     with open(base_config_path, 'r') as f:
@@ -117,32 +132,20 @@ def create_mixed_mode_config(base_config_path: Path, agent_specs: List[Dict[str,
 
     # Create agent_modes dictionary
     agent_modes = {}
-    llm_models = []
+    agent_models = {}
 
     for agent_spec in agent_specs:
         agent_modes[agent_spec['id']] = agent_spec['mode']
-        if agent_spec['mode'] == 'llm' and agent_spec['model'] != 'perfect':
-            llm_models.append(agent_spec['model'])
+        if agent_spec['mode'] == 'llm':
+            agent_models[agent_spec['id']] = agent_spec['model']
 
     sim_config['agents']['agent_modes'] = agent_modes
+    sim_config['agents']['agent_models'] = agent_models
 
-    # Set the model for LLM agents (they'll all use the same one in current implementation)
-    # We'll use the most common LLM model or the first one
-    if llm_models:
-        # Use the most common model
-        from collections import Counter
-        model_counts = Counter(llm_models)
-        most_common_model = model_counts.most_common(1)[0][0]
-        sim_config['agents']['model'] = most_common_model
-
-        # Warn if multiple different LLM models were requested
-        unique_models = set(llm_models)
-        if len(unique_models) > 1:
-            print("\n⚠️  WARNING: Multiple LLM models requested, but current simulation")
-            print("   supports only one model for all LLM agents.")
-            print(f"   Using: {most_common_model}")
-            print(f"   Requested: {', '.join(unique_models)}")
-            print("   To use different models, simulation code needs modification.\n")
+    # Keep a default model for backward compatibility in case a run has no per-agent map.
+    if agent_models:
+        first_llm_model = next(iter(agent_models.values()))
+        sim_config['agents']['model'] = first_llm_model
 
     return sim_config
 
@@ -187,7 +190,8 @@ def run_heterogeneous_experiment(configs: List[Tuple[str, int]],
                                 base_config_path: Path,
                                 output_dir: str,
                                 runs: int,
-                                use_mixed_mode: bool = True):
+                                simulation_root: str,
+                                use_mixed_mode: bool = True) -> bool:
     """Run experiment with heterogeneous agent configuration."""
 
     # Expand agent configurations
@@ -236,6 +240,9 @@ def run_heterogeneous_experiment(configs: List[Tuple[str, int]],
             'max_workers': min(runs, 5),
             'tags': ['heterogeneous', 'mixed-agents'] + list(set([c[0] for c in configs]))
         },
+        'runner': {
+            'simulation_root': simulation_root
+        },
         'simulation_config': sim_config,
         'analysis': {
             'key_metrics': [
@@ -255,7 +262,7 @@ def run_heterogeneous_experiment(configs: List[Tuple[str, int]],
     temp_config_dir = Path("experiment_framework/configs/temp")
     temp_config_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     temp_config_path = temp_config_dir / f"heterogeneous_{timestamp}.yaml"
 
     with open(temp_config_path, 'w') as f:
@@ -273,6 +280,7 @@ def run_heterogeneous_experiment(configs: List[Tuple[str, int]],
     print(f"\nExperiment name: {experiment_name}")
     print(f"Output directory: experiments/{output_dir}/")
     print(f"Number of runs: {runs}")
+    print(f"Simulation root: {simulation_root}")
     print(f"Config mode: {config_desc}")
     print(f"{'='*60}")
 
@@ -293,19 +301,25 @@ def run_heterogeneous_experiment(configs: List[Tuple[str, int]],
         duration = time.time() - start_time
 
         if process.returncode == 0:
+            latest_path = get_latest_experiment_path(output_dir)
             print(f"\n✓ Successfully completed heterogeneous experiment")
             print(f"  Duration: {duration:.1f} seconds")
-            print(f"  Results: experiments/{output_dir}/{experiment_name}")
+            if latest_path:
+                print(f"  Results: {latest_path}")
+            else:
+                print(f"  Results: experiments/{output_dir}/")
+            return True
         else:
             print(f"\n✗ Failed to run heterogeneous experiment")
             print(f"  Exit code: {process.returncode}")
+            return False
 
     except KeyboardInterrupt:
         print("\n\n⚠️  Experiment interrupted by user")
         sys.exit(1)
     except Exception as e:
         print(f"\n✗ Error running heterogeneous experiment: {str(e)}")
-        sys.exit(1)
+        return False
     finally:
         # Clean up temp config
         if temp_config_path.exists():
@@ -337,16 +351,17 @@ MODEL SHORTCUTS:
   o3          → o3
   gpt41mini   → gpt-4.1-mini
   gpt5mini    → gpt-5-mini
+  gpt52       → gpt-5.2
   deepseek    → deepseek-ai/DeepSeek-R1-0528-Turbo
   claude      → claude-sonnet-4-20250514
+  claudeopus46 → claude-opus-4.6
   gemini      → google/gemini-2.5-pro
   geminiflash → google/gemini-2.5-flash
   perfect     → Perfect agents (non-LLM, optimal behavior)
 
 NOTES:
-  • Current simulation supports mixed modes (LLM vs perfect) but all LLM agents
-    share the same model. The script will use the most common LLM model specified.
-  • To enable true per-agent models, simulation code needs modification.
+  • Mixed mode supports per-agent model assignment for LLM agents.
+  • The --heterogeneous-mode config format is still experimental.
   • Agent IDs are assigned sequentially: agent_1, agent_2, etc.
 """)
 
@@ -354,6 +369,9 @@ NOTES:
     parser.add_argument('--config', type=str,
                        default='information_asymmetry_simulation/config.yaml',
                        help='Base configuration file (default: config.yaml)')
+    parser.add_argument('--simulation-root', type=str,
+                       default='information_asymmetry_simulation',
+                       help='Simulation code directory to execute (default: information_asymmetry_simulation)')
     parser.add_argument('--output-dir', type=str,
                        default='heterogeneous',
                        help='Output directory name under experiments/ (default: heterogeneous)')
@@ -408,14 +426,27 @@ NOTES:
         print("  • information_asymmetry_simulation/config_perfect.yaml (perfect agents)")
         sys.exit(1)
 
+    repo_root = Path(__file__).resolve().parent
+    simulation_root_path = Path(args.simulation_root)
+    if not simulation_root_path.is_absolute():
+        simulation_root_path = (repo_root / simulation_root_path).resolve()
+    if not simulation_root_path.exists() or not (simulation_root_path / "main.py").exists():
+        print(f"Error: Simulation root is invalid: {args.simulation_root}")
+        print("Expected a directory containing main.py")
+        sys.exit(1)
+    simulation_root = str(simulation_root_path)
+
     # Run the experiment
-    run_heterogeneous_experiment(
+    success = run_heterogeneous_experiment(
         configs,
         base_config_path,
         args.output_dir,
         args.runs,
+        simulation_root,
         use_mixed_mode=not args.heterogeneous_mode
     )
+    if not success:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -21,6 +21,62 @@ from typing import List, Tuple, Dict
 import argparse
 
 
+MODEL_SHORTCUTS = {
+    'o3mini': 'o3-mini-2025-01-31',
+    'o3': 'o3',
+    'gpt41mini': 'gpt-4.1-mini',
+    'gpt5mini': 'gpt-5-mini',
+    'gpt52': 'gpt-5.2-2025-12-11',
+    'gpt5_2': 'gpt-5.2-2025-12-11',
+    'gpt-5.2': 'gpt-5.2-2025-12-11',
+    'deepseek': 'deepseek-ai/DeepSeek-R1-0528-Turbo',
+    'claude': 'claude-sonnet-4-20250514',
+    'claudesonnet': 'claude-sonnet-4-20250514',
+    'claudeopus46': 'claude-opus-4-6',
+    'opus46': 'claude-opus-4-6',
+    'claude-opus-4.6': 'claude-opus-4-6',
+    'gemini': 'google/gemini-2.5-pro',
+    'gemini25': 'google/gemini-2.5-pro',
+    'gemini25pro': 'google/gemini-2.5-pro',
+    'geminiflash': 'google/gemini-2.5-flash',
+    'perfect': 'perfect',
+}
+
+OPENROUTER_PROVIDERS = {'google', 'meta', 'mistralai', 'cohere', 'databricks', 'amazon', 'x-ai'}
+
+
+def resolve_model_name(model_token: str) -> str:
+    """Resolve model shortcut to full model name."""
+    return MODEL_SHORTCUTS.get(model_token.lower(), model_token)
+
+
+def required_api_key_for_model(model_name: str) -> str:
+    """Map a model name to the required API-key environment variable."""
+    model_lower = model_name.lower()
+    if model_lower == 'perfect':
+        return ""
+    if model_lower.startswith('claude') or model_lower.startswith('anthropic/claude'):
+        return 'ANTHROPIC_API_KEY'
+    if '/' in model_name:
+        provider = model_name.split('/')[0].lower()
+        if provider in OPENROUTER_PROVIDERS:
+            return 'OPENROUTER_API_KEY'
+        return 'DEEPINFRA_TOKEN'
+    return 'OPENAI_API_KEY'
+
+
+def get_required_api_keys(models: List[str]) -> Dict[str, List[str]]:
+    """Build mapping: required_env_var -> list of models that need it."""
+    required: Dict[str, List[str]] = {}
+    for token in models:
+        resolved = resolve_model_name(token)
+        env_key = required_api_key_for_model(resolved)
+        if not env_key:
+            continue
+        required.setdefault(env_key, []).append(resolved)
+    return required
+
+
 def print_header(title: str):
     """Print a formatted header"""
     print(f"\n{'='*60}")
@@ -172,6 +228,8 @@ def main():
                        help='Skip the perfect mode pipeline test')
     parser.add_argument('--quick', action='store_true',
                        help='Run minimal checks only')
+    parser.add_argument('--require-models', nargs='+', default=None,
+                       help='Require API keys needed by this list of models')
     args = parser.parse_args()
 
     print_header("SETUP VALIDATION")
@@ -202,6 +260,23 @@ def main():
         missing_keys = [k for k, v in api_keys.items() if not v]
         warnings.append(f"Some API keys missing: {', '.join(missing_keys)}")
 
+    # Optional strict API-key check based on models that must run
+    if args.require_models:
+        required_keys = get_required_api_keys(args.require_models)
+        missing_required = [key for key in required_keys.keys() if not api_keys.get(key, False)]
+        if missing_required:
+            all_passed = False
+            print_status(
+                "Required model API keys",
+                False,
+                f"missing: {', '.join(sorted(missing_required))}"
+            )
+            for missing_key in sorted(missing_required):
+                models_for_key = ", ".join(sorted(set(required_keys[missing_key])))
+                print(f"    {missing_key} is required for: {models_for_key}")
+        else:
+            print_status("Required model API keys", True, "all required keys are set")
+
     # Check 4: Config files
     print_header("4. Configuration Files")
     if not check_config_files():
@@ -230,7 +305,7 @@ def main():
     if all_passed:
         print("\n  ✓ All checks passed!")
         print("\n  You're ready to run experiments. Try:")
-        print("    python run_all_experiments.py --dry-run")
+        print("    python run_paper_experiments.py --dry-run")
         print("\n  Or run individual experiments from README.md")
         return 0
     else:

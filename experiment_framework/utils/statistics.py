@@ -30,7 +30,8 @@ class StatisticalAggregator:
             return {
                 'error': 'No successful runs to aggregate',
                 'total_runs': len(self.run_results),
-                'successful_runs': 0
+                'successful_runs': 0,
+                'failed_runs': len(self.run_results)
             }
         
         aggregate = {
