@@ -149,6 +149,7 @@ def create_agent_types_config(base_config_path: Path,
 
     # Update agent counts
     sim_config['simulation']['agents'] = total
+    sim_config['simulation']['fail_fast_on_agent_error'] = True
     sim_config['agents']['uncooperative_count'] = uncooperative
     sim_config['agents']['competitive_count'] = competitive
     sim_config['agents']['policy_count'] = policy
@@ -270,6 +271,7 @@ def run_agent_types_experiment(neutral: int,
     print(f"\nModel: {model}")
     print(f"Rounds: {sim_config['simulation']['rounds']}")
     print(f"Revenue visibility: {revenue_visibility}")
+    print(f"Fail-fast agent errors: {sim_config['simulation'].get('fail_fast_on_agent_error', False)}")
     print(f"Simulation root: {simulation_root}")
     if sharing_incentive is not None:
         print(f"Information sharing incentive: ${sharing_incentive:,} per piece")

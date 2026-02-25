@@ -130,6 +130,15 @@ class Agent:
         """Get the current active task"""
         return self.tasks[0] if self.tasks else None
 
+    def _should_fail_fast_on_agent_error(self) -> bool:
+        """Return True when agent runtime errors should abort the simulation."""
+        return bool(
+            self.simulation_config.get(
+                'fail_fast_on_agent_error',
+                self.config.get('fail_fast_on_agent_error', False)
+            )
+        )
+
     def _call_llm(self, messages: List[Dict[str, str]], model: str = None) -> str:
         """Unified interface for calling LLM APIs across different providers.
 
@@ -249,6 +258,10 @@ class Agent:
             import traceback
             self.logger.error(f"Error getting agent actions: {e}")
             self.logger.error(f"Traceback: {traceback.format_exc()}")
+            if self._should_fail_fast_on_agent_error():
+                raise RuntimeError(
+                    f"Fail-fast: agent {self.agent_id} action generation failed in round {round_num}"
+                ) from e
             return []
             
     def _build_prompt(self, current_state: Dict[str, Any], round_num: int) -> str:
@@ -1042,6 +1055,10 @@ Rate ALL OTHER agents (you'll rate yourself separately as 'self') based on their
                 
         except Exception as e:
             self.logger.error(f"Error generating strategic report: {e}")
+            if self._should_fail_fast_on_agent_error():
+                raise RuntimeError(
+                    f"Fail-fast: agent {self.agent_id} report generation failed in round {round_num}"
+                ) from e
             error_report = {
                 "error": str(e)
             }

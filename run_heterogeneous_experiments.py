@@ -126,6 +126,7 @@ def create_mixed_mode_config(base_config_path: Path, agent_specs: List[Dict[str,
 
     # Update agent count
     sim_config['simulation']['agents'] = len(agent_specs)
+    sim_config['simulation']['fail_fast_on_agent_error'] = True
 
     # Set to mixed mode
     sim_config['agents']['mode'] = 'mixed'
@@ -160,6 +161,7 @@ def create_heterogeneous_config(base_config_path: Path, agent_specs: List[Dict[s
 
     # Update agent count
     sim_config['simulation']['agents'] = len(agent_specs)
+    sim_config['simulation']['fail_fast_on_agent_error'] = True
 
     # Create agent-specific configurations (for future compatibility)
     sim_config['agents']['heterogeneous'] = True
@@ -281,6 +283,7 @@ def run_heterogeneous_experiment(configs: List[Tuple[str, int]],
     print(f"Output directory: experiments/{output_dir}/")
     print(f"Number of runs: {runs}")
     print(f"Simulation root: {simulation_root}")
+    print(f"Fail-fast agent errors: {sim_config['simulation'].get('fail_fast_on_agent_error', False)}")
     print(f"Config mode: {config_desc}")
     print(f"{'='*60}")
 
