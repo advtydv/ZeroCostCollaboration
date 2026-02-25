@@ -1,7 +1,6 @@
 # Zero cost Paper Experiments
 
 ## Setup
-Use one interpreter consistently for install + run commands (for example, if deps are installed in `python`, run scripts with `python`, not a different `python3`).
 
 1. Install Python deps:
 ```bash
