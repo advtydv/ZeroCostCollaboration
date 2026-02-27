@@ -16,6 +16,8 @@ from typing import Dict, Tuple, Optional, List
 from datetime import datetime
 import time
 
+REPO_ROOT = Path(__file__).resolve().parent
+
 # Define the models to test
 MODELS_TO_TEST = [
     "o3-mini-2025-01-31",
@@ -126,7 +128,7 @@ def create_experiment_name(
 
 def get_latest_experiment_path(output_dir: str) -> Optional[Path]:
     """Get the latest experiment folder path under experiments/output_dir."""
-    experiments_root = Path("experiments") / output_dir
+    experiments_root = REPO_ROOT / "experiments" / output_dir
     if not experiments_root.exists():
         return None
     candidates = [p for p in experiments_root.iterdir() if p.is_dir() and p.name.startswith("exp_")]
@@ -249,7 +251,7 @@ def run_agent_types_experiment(neutral: int,
     }
 
     # Save temp config
-    temp_config_dir = Path("experiment_framework/configs/temp")
+    temp_config_dir = REPO_ROOT / "experiment_framework" / "configs" / "temp"
     temp_config_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -283,16 +285,16 @@ def run_agent_types_experiment(neutral: int,
     # Run experiment
     cmd = [
         sys.executable,
-        "experiment_framework/run_experiment.py",
+        str(REPO_ROOT / "experiment_framework" / "run_experiment.py"),
         "--config", str(temp_config_path),
-        "--experiments-dir", f"experiments/{output_dir}"
+        "--experiments-dir", str(REPO_ROOT / "experiments" / output_dir)
     ]
 
     try:
         print(f"\nStarting experiment...")
         start_time = time.time()
 
-        process = subprocess.run(cmd, capture_output=False, text=True)
+        process = subprocess.run(cmd, capture_output=False, text=True, cwd=str(REPO_ROOT))
 
         duration = time.time() - start_time
 
@@ -510,6 +512,8 @@ NOTES:
 
     # Check base config exists
     base_config_path = Path(args.config)
+    if not base_config_path.is_absolute():
+        base_config_path = (REPO_ROOT / base_config_path).resolve()
     if not base_config_path.exists():
         print(f"Error: Config file not found: {base_config_path}")
         print("\nAvailable configs:")
@@ -518,10 +522,9 @@ NOTES:
         print("  • information_asymmetry_simulation/config_perfect.yaml (perfect agents)")
         sys.exit(1)
 
-    repo_root = Path(__file__).resolve().parent
     simulation_root_path = Path(args.simulation_root)
     if not simulation_root_path.is_absolute():
-        simulation_root_path = (repo_root / simulation_root_path).resolve()
+        simulation_root_path = (REPO_ROOT / simulation_root_path).resolve()
     if not simulation_root_path.exists() or not (simulation_root_path / "main.py").exists():
         print(f"Error: Simulation root is invalid: {args.simulation_root}")
         print("Expected a directory containing main.py")

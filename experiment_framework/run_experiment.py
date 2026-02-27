@@ -368,7 +368,7 @@ class ExperimentRunner:
                     f.write(result.stdout)
                 git_info['diff_file'] = str(diff_file)
                 
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, FileNotFoundError, OSError) as e:
             self.logger.warning(f"Git information unavailable: {e}")
             git_info['error'] = str(e)
         

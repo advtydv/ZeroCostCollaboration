@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import List, Tuple, Dict
 import argparse
 
+REPO_ROOT = Path(__file__).resolve().parent
+
 
 MODEL_SHORTCUTS = {
     'o3mini': 'o3-mini-2025-01-31',
@@ -165,7 +167,7 @@ def check_config_files() -> bool:
 
     all_exist = True
     for config_file in config_files:
-        exists = Path(config_file).exists()
+        exists = (REPO_ROOT / config_file).exists()
         print_status(f"Config '{config_file}'", exists, "found" if exists else "MISSING")
         if not exists:
             all_exist = False
@@ -181,7 +183,7 @@ def run_perfect_mode_test(quick: bool = True) -> bool:
     # Use a minimal configuration for quick testing
     cmd = [
         sys.executable,
-        "run_heterogeneous_experiments.py",
+        str(REPO_ROOT / "run_heterogeneous_experiments.py"),
         "-perfect", "5",
         "--runs", "1",
         "--output-dir", "validation_test"
@@ -192,7 +194,8 @@ def run_perfect_mode_test(quick: bool = True) -> bool:
             cmd,
             capture_output=True,
             text=True,
-            timeout=120  # 2 minute timeout
+            timeout=120,  # 2 minute timeout
+            cwd=str(REPO_ROOT)
         )
 
         if result.returncode == 0:
@@ -200,7 +203,7 @@ def run_perfect_mode_test(quick: bool = True) -> bool:
 
             # Clean up test output
             import shutil
-            test_dir = Path("experiments/validation_test")
+            test_dir = REPO_ROOT / "experiments" / "validation_test"
             if test_dir.exists():
                 shutil.rmtree(test_dir)
                 print("  (Cleaned up test output)")
