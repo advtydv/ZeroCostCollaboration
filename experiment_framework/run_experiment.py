@@ -192,7 +192,7 @@ class ExperimentRunner:
     ):
         self.config_path = Path(config_path).absolute() if config_path else None
         self.experiments_base = Path(experiments_dir)
-        self.experiments_base.mkdir(exist_ok=True)
+        self.experiments_base.mkdir(parents=True, exist_ok=True)
         
         # Initialize registry
         self.registry = ExperimentRegistry(self.experiments_base / "registry.yaml")
