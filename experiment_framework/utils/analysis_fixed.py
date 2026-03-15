@@ -180,7 +180,7 @@ class ExperimentAnalyzer:
     def _generate_plots_safe(self):
         """Generate visualization plots with error handling"""
         plots_dir = self.experiment_dir / "plots"
-        plots_dir.mkdir(exist_ok=True)
+        plots_dir.mkdir(parents=True, exist_ok=True)
         
         try:
             self._plot_distributions_safe(plots_dir)
