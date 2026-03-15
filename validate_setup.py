@@ -15,10 +15,14 @@ Run this before sending experiments to collaborators or running real experiments
 
 import sys
 import os
+import json
+import base64
+import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import argparse
+from functools import lru_cache
 
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -28,9 +32,9 @@ MODEL_SHORTCUTS = {
     'o3': 'o3',
     'gpt41mini': 'gpt-4.1-mini',
     'gpt5mini': 'gpt-5-mini',
-    'gpt52': 'gpt-5.2-2025-12-11',
-    'gpt5_2': 'gpt-5.2-2025-12-11',
-    'gpt-5.2': 'gpt-5.2-2025-12-11',
+    'gpt54': 'gpt-5.4-2026-03-05',
+    'gpt5_4': 'gpt-5.4-2026-03-05',
+    'gpt-5.4': 'gpt-5.4-2026-03-05',
     'deepseek': 'deepseek-ai/DeepSeek-R1-0528-Turbo',
     'claude': 'claude-sonnet-4-20250514',
     'claudesonnet': 'claude-sonnet-4-20250514',
@@ -45,6 +49,138 @@ MODEL_SHORTCUTS = {
 }
 
 OPENROUTER_PROVIDERS = {'google', 'meta', 'mistralai', 'cohere', 'databricks', 'amazon', 'x-ai'}
+
+
+def is_secret_reference(value: str) -> bool:
+    """Return True when the env value points at AWS Secrets Manager."""
+    normalized = value.strip().lower()
+    return normalized.startswith("aws-secretsmanager://") or normalized.startswith("arn:aws:secretsmanager:")
+
+
+def normalize_secret_id(reference: str) -> str:
+    """Convert aws-secretsmanager:// refs into SecretId values accepted by AWS."""
+    stripped = reference.strip()
+    if stripped.lower().startswith("aws-secretsmanager://"):
+        return stripped[len("aws-secretsmanager://"):]
+    return stripped
+
+
+def infer_secret_region(secret_id: str) -> Optional[str]:
+    """Extract region from a Secrets Manager ARN when available."""
+    if secret_id.startswith("arn:aws:secretsmanager:"):
+        parts = secret_id.split(":", 5)
+        if len(parts) >= 4 and parts[3]:
+            return parts[3]
+    return None
+
+
+def extract_secret_value(secret_payload: str, env_name: str, provider_label: str) -> str:
+    """Support plain-string secrets and common JSON secret shapes."""
+    text = secret_payload.strip()
+    if not text:
+        raise ValueError(f"Resolved AWS secret for {env_name} was empty")
+
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+
+        if isinstance(payload, dict):
+            candidate_keys = [
+                env_name,
+                env_name.lower(),
+                provider_label,
+                provider_label.lower(),
+                f"{provider_label.lower()}_api_key",
+                f"{provider_label.lower()}_token",
+                "api_key",
+                "apikey",
+                "token",
+                "key",
+                "secret",
+                "value",
+            ]
+            for key in candidate_keys:
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+            string_values = [value.strip() for value in payload.values() if isinstance(value, str) and value.strip()]
+            if len(string_values) == 1:
+                return string_values[0]
+
+            raise ValueError(
+                f"Resolved AWS secret for {env_name} is JSON but does not contain a recognizable key"
+            )
+
+    return text
+
+
+def fetch_secret_via_botocore(secret_id: str, region_name: Optional[str]) -> str:
+    """Fetch a secret using botocore without requiring boto3."""
+    from botocore.config import Config
+    from botocore.session import Session
+
+    session = Session()
+    client = session.create_client(
+        "secretsmanager",
+        region_name=region_name,
+        config=Config(
+            connect_timeout=5,
+            read_timeout=5,
+            retries={"max_attempts": 1, "mode": "standard"},
+        ),
+    )
+    response = client.get_secret_value(SecretId=secret_id)
+    if "SecretString" in response and response["SecretString"] is not None:
+        return response["SecretString"]
+    if "SecretBinary" in response and response["SecretBinary"] is not None:
+        return base64.b64decode(response["SecretBinary"]).decode("utf-8")
+    raise ValueError(f"AWS secret {secret_id} did not contain SecretString or SecretBinary")
+
+
+def fetch_secret_via_aws_cli(secret_id: str, region_name: Optional[str]) -> str:
+    """Fetch a secret using the AWS CLI as a fallback."""
+    if not shutil.which("aws"):
+        raise FileNotFoundError("aws CLI not found")
+
+    cmd = ["aws", "secretsmanager", "get-secret-value", "--secret-id", secret_id, "--output", "json"]
+    if region_name:
+        cmd.extend(["--region", region_name])
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+    response = json.loads(result.stdout)
+    if "SecretString" in response and response["SecretString"] is not None:
+        return response["SecretString"]
+    if "SecretBinary" in response and response["SecretBinary"] is not None:
+        return base64.b64decode(response["SecretBinary"]).decode("utf-8")
+    raise ValueError(f"AWS CLI returned no secret payload for {secret_id}")
+
+
+@lru_cache(maxsize=32)
+def resolve_aws_secret_reference(reference: str, env_name: str, provider_label: str) -> str:
+    """Resolve an AWS Secrets Manager reference into the actual provider key."""
+    secret_id = normalize_secret_id(reference)
+    region_name = infer_secret_region(secret_id)
+    errors = []
+
+    try:
+        secret_payload = fetch_secret_via_botocore(secret_id, region_name)
+        return extract_secret_value(secret_payload, env_name, provider_label)
+    except Exception as exc:
+        errors.append(f"botocore: {exc}")
+
+    try:
+        secret_payload = fetch_secret_via_aws_cli(secret_id, region_name)
+        return extract_secret_value(secret_payload, env_name, provider_label)
+    except Exception as exc:
+        errors.append(f"awscli: {exc}")
+
+    raise ValueError(
+        f"Could not resolve {env_name} via AWS Secrets Manager reference. "
+        f"Tried botocore/awscli. Details: {' | '.join(errors)}"
+    )
 
 
 def resolve_model_name(model_token: str) -> str:
@@ -134,7 +270,7 @@ def check_dependencies() -> Tuple[bool, List[str]]:
     return len(missing) == 0, missing
 
 
-def check_api_keys() -> Dict[str, bool]:
+def check_api_keys() -> Tuple[Dict[str, bool], Dict[str, str]]:
     """Check which API keys are set"""
     api_keys = {
         'OPENAI_API_KEY': 'OpenAI (GPT models)',
@@ -142,20 +278,37 @@ def check_api_keys() -> Dict[str, bool]:
         'DEEPINFRA_TOKEN': 'DeepInfra (DeepSeek models)',
         'OPENROUTER_API_KEY': 'OpenRouter (Gemini models)',
     }
+    provider_labels = {
+        'OPENAI_API_KEY': 'OpenAI',
+        'ANTHROPIC_API_KEY': 'Claude',
+        'DEEPINFRA_TOKEN': 'DeepInfra',
+        'OPENROUTER_API_KEY': 'OpenRouter',
+    }
 
     results = {}
+    invalid_values = {}
     for key, description in api_keys.items():
-        is_set = bool(os.environ.get(key))
-        results[key] = is_set
-        if is_set:
+        value = os.environ.get(key)
+        is_set = bool(value)
+        if is_set and value and is_secret_reference(value):
+            try:
+                resolve_aws_secret_reference(value, key, provider_labels[key])
+                results[key] = True
+                print_status(f"{key}", True, "resolved via AWS Secrets Manager")
+            except Exception as exc:
+                results[key] = False
+                invalid_values[key] = f"set to AWS secret reference but resolution failed: {exc}"
+                print_status(f"{key}", False, invalid_values[key])
+        elif is_set and value:
+            results[key] = True
             # Show first/last few chars for verification
-            value = os.environ.get(key, "")
             masked = value[:4] + "..." + value[-4:] if len(value) > 8 else "****"
             print_status(f"{key}", True, f"set ({masked})")
         else:
+            results[key] = False
             print_status(f"{key}", False, f"NOT SET - {description} won't work")
 
-    return results
+    return results, invalid_values
 
 
 def check_config_files() -> bool:
@@ -256,12 +409,20 @@ def main():
 
     # Check 3: API Keys
     print_header("3. API Keys")
-    api_keys = check_api_keys()
+    api_keys, invalid_api_values = check_api_keys()
     if not any(api_keys.values()):
-        warnings.append("No API keys are set - you can only run 'perfect' mode experiments")
+        if invalid_api_values:
+            warnings.append("No usable API keys are set - one or more values are unresolved secret references")
+        else:
+            warnings.append("No API keys are set - you can only run 'perfect' mode experiments")
     elif not all(api_keys.values()):
         missing_keys = [k for k, v in api_keys.items() if not v]
         warnings.append(f"Some API keys missing: {', '.join(missing_keys)}")
+    if invalid_api_values:
+        all_passed = False
+        for key, reason in invalid_api_values.items():
+            print(f"    {key}: {reason}")
+        print("    Fix: provide AWS credentials that can read the referenced secret, or export the raw provider key string.")
 
     # Optional strict API-key check based on models that must run
     if args.require_models:

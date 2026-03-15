@@ -2,25 +2,37 @@
 
 ## Setup
 
-1. Install Python deps:
+1. Create a clean virtual environment:
 ```bash
-pip install -r information_asymmetry_simulation/requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
-2. Export API keys:
+2. Install Python deps:
+```bash
+pip install -r requirements.txt
+```
+
+3. Export API credentials.
+Raw provider keys work, and AWS Secrets Manager references also work if the runtime has AWS credentials that can read those secrets:
 ```bash
 export OPENAI_API_KEY="..."
 export ANTHROPIC_API_KEY="..."
+export OPENROUTER_API_KEY="..."
+export DEEPINFRA_TOKEN="..."
 ```
 
-3. Validate:
+4. Validate:
 ```bash
-python validate_setup.py --require-models gpt52 claudeopus46 o3 claude
+python validate_setup.py --skip-test --require-models gpt54 claudeopus46 o3 claude
 ```
+
+If you are using AWS secret references such as `aws-secretsmanager://arn:aws:secretsmanager:...`,
+`validate_setup.py` now verifies that they can actually be resolved before you launch experiments.
 
 ## Run full paper matrix
 This runs:
-- baseline (regular) for GPT-5.2 (`gpt-5.2-2025-12-11`) and Claude Opus 4.6 (`claude-opus-4-6`)
+- baseline (regular) for GPT-5.4 (`gpt-5.4-2026-03-05`) and Claude Opus 4.6 (`claude-opus-4-6`)
 - automated request + automated fulfill (auto baseline) for both models
 - interventions (policy, incentive=1000, visibility=limited) for both models
 - heterogeneous runs:

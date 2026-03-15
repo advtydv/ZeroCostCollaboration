@@ -23,9 +23,9 @@ MODEL_SHORTCUTS = {
     'o3': 'o3',
     'gpt41mini': 'gpt-4.1-mini',
     'gpt5mini': 'gpt-5-mini',
-    'gpt52': 'gpt-5.2-2025-12-11',
-    'gpt5_2': 'gpt-5.2-2025-12-11',
-    'gpt-5.2': 'gpt-5.2-2025-12-11',
+    'gpt54': 'gpt-5.4-2026-03-05',
+    'gpt5_4': 'gpt-5.4-2026-03-05',
+    'gpt-5.4': 'gpt-5.4-2026-03-05',
     'deepseek': 'deepseek-ai/DeepSeek-R1-0528-Turbo',
     'claude': 'claude-sonnet-4-20250514',
     'claudesonnet': 'claude-sonnet-4-20250514',
@@ -356,7 +356,7 @@ MODEL SHORTCUTS:
   o3          → o3
   gpt41mini   → gpt-4.1-mini
   gpt5mini    → gpt-5-mini
-  gpt52       → gpt-5.2
+  gpt54       → gpt-5.4
   deepseek    → deepseek-ai/DeepSeek-R1-0528-Turbo
   claude      → claude-sonnet-4-20250514
   claudeopus46 → claude-opus-4.6

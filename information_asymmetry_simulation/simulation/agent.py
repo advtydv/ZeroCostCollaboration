@@ -2,13 +2,197 @@
 Agent implementation for Information Asymmetry Simulation
 """
 
+import base64
 import json
 import logging
 import random
+import shutil
+import subprocess
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from collections import defaultdict
+from functools import lru_cache
 import openai
+
+
+def _is_secret_reference(value: str) -> bool:
+    """Return True when the env value points at AWS Secrets Manager."""
+    normalized = value.strip().lower()
+    return normalized.startswith("aws-secretsmanager://") or normalized.startswith("arn:aws:secretsmanager:")
+
+
+def _normalize_secret_id(reference: str) -> str:
+    """Convert aws-secretsmanager:// refs into SecretId values accepted by AWS."""
+    stripped = reference.strip()
+    if stripped.lower().startswith("aws-secretsmanager://"):
+        return stripped[len("aws-secretsmanager://"):]
+    return stripped
+
+
+def _infer_secret_region(secret_id: str) -> Optional[str]:
+    """Extract region from a Secrets Manager ARN when available."""
+    if secret_id.startswith("arn:aws:secretsmanager:"):
+        parts = secret_id.split(":", 5)
+        if len(parts) >= 4 and parts[3]:
+            return parts[3]
+    return None
+
+
+def _extract_secret_value(secret_payload: str, env_name: str, provider_label: str) -> str:
+    """Support plain-string secrets and common JSON secret shapes."""
+    text = secret_payload.strip()
+    if not text:
+        raise ValueError(f"Resolved AWS secret for {env_name} was empty")
+
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return text
+
+        if isinstance(payload, dict):
+            candidate_keys = [
+                env_name,
+                env_name.lower(),
+                provider_label,
+                provider_label.lower(),
+                f"{provider_label.lower()}_api_key",
+                f"{provider_label.lower()}_token",
+                "api_key",
+                "apikey",
+                "token",
+                "key",
+                "secret",
+                "value",
+            ]
+            for key in candidate_keys:
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+
+            string_values = [value.strip() for value in payload.values() if isinstance(value, str) and value.strip()]
+            if len(string_values) == 1:
+                return string_values[0]
+
+            raise ValueError(
+                f"Resolved AWS secret for {env_name} is JSON but does not contain a recognizable key"
+            )
+
+    return text
+
+
+def _fetch_secret_via_botocore(secret_id: str, region_name: Optional[str]) -> str:
+    """Fetch a secret using botocore without requiring boto3."""
+    from botocore.config import Config
+    from botocore.session import Session
+
+    session = Session()
+    client = session.create_client(
+        "secretsmanager",
+        region_name=region_name,
+        config=Config(
+            connect_timeout=5,
+            read_timeout=5,
+            retries={"max_attempts": 1, "mode": "standard"},
+        ),
+    )
+    response = client.get_secret_value(SecretId=secret_id)
+    if "SecretString" in response and response["SecretString"] is not None:
+        return response["SecretString"]
+    if "SecretBinary" in response and response["SecretBinary"] is not None:
+        return base64.b64decode(response["SecretBinary"]).decode("utf-8")
+    raise ValueError(f"AWS secret {secret_id} did not contain SecretString or SecretBinary")
+
+
+def _fetch_secret_via_aws_cli(secret_id: str, region_name: Optional[str]) -> str:
+    """Fetch a secret using the AWS CLI as a fallback."""
+    if not shutil.which("aws"):
+        raise FileNotFoundError("aws CLI not found")
+
+    cmd = ["aws", "secretsmanager", "get-secret-value", "--secret-id", secret_id, "--output", "json"]
+    if region_name:
+        cmd.extend(["--region", region_name])
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=10)
+    response = json.loads(result.stdout)
+    if "SecretString" in response and response["SecretString"] is not None:
+        return response["SecretString"]
+    if "SecretBinary" in response and response["SecretBinary"] is not None:
+        return base64.b64decode(response["SecretBinary"]).decode("utf-8")
+    raise ValueError(f"AWS CLI returned no secret payload for {secret_id}")
+
+
+@lru_cache(maxsize=32)
+def _resolve_aws_secret_reference(reference: str, env_name: str, provider_label: str) -> str:
+    """Resolve an AWS Secrets Manager reference into the actual provider key."""
+    secret_id = _normalize_secret_id(reference.strip())
+    region_name = _infer_secret_region(secret_id)
+    errors = []
+
+    try:
+        secret_payload = _fetch_secret_via_botocore(secret_id, region_name)
+        return _extract_secret_value(secret_payload, env_name, provider_label)
+    except Exception as exc:  # pragma: no cover - backend-specific failures depend on runtime env
+        errors.append(f"botocore: {exc}")
+
+    try:
+        secret_payload = _fetch_secret_via_aws_cli(secret_id, region_name)
+        return _extract_secret_value(secret_payload, env_name, provider_label)
+    except Exception as exc:  # pragma: no cover - backend-specific failures depend on runtime env
+        errors.append(f"awscli: {exc}")
+
+    raise ValueError(
+        f"Could not resolve {env_name} via AWS Secrets Manager reference. "
+        f"Tried botocore/awscli. Details: {' | '.join(errors)}"
+    )
+
+
+def _get_resolved_api_key(env_name: str, provider_label: str) -> str:
+    """Load API key from env, resolving AWS Secrets Manager references when needed."""
+    import os
+
+    api_key = os.environ.get(env_name)
+    if not api_key:
+        raise ValueError(f"Please set the {env_name} environment variable for {provider_label} models")
+
+    if _is_secret_reference(api_key):
+        return _resolve_aws_secret_reference(api_key, env_name, provider_label)
+
+    return api_key
+
+
+def _extract_first_balanced_json_object(text: str) -> Optional[str]:
+    """Extract the first balanced top-level JSON object from free-form model output."""
+    start_idx = text.find('{')
+    if start_idx == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+
+    for idx in range(start_idx, len(text)):
+        char = text[idx]
+
+        if in_string:
+            if escape:
+                escape = False
+            elif char == '\\':
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start_idx:idx + 1]
+
+    return None
 
 
 class Agent:
@@ -63,8 +247,6 @@ class Agent:
         
         # LLM client setup (only needed for LLM mode)
         if self.mode == "llm":
-            import os
-
             # Detect provider based on model name
             model_name = self.config.get('model', 'gpt-4')
             model_name_lower = model_name.lower()
@@ -73,9 +255,7 @@ class Agent:
             # Detect Anthropic/Claude models
             if model_name_lower.startswith('claude') or model_name_lower.startswith('anthropic/claude'):
                 # Anthropic setup
-                api_key = os.environ.get('ANTHROPIC_API_KEY')
-                if not api_key:
-                    raise ValueError("Please set the ANTHROPIC_API_KEY environment variable for Claude models")
+                api_key = _get_resolved_api_key('ANTHROPIC_API_KEY', 'Claude')
 
                 try:
                     import anthropic
@@ -88,9 +268,7 @@ class Agent:
             # Detect OpenRouter models (format: provider/model, e.g., "google/gemini-2.5-pro", "x-ai/grok-4")
             elif '/' in model_name and provider_prefix in {'google', 'meta', 'mistralai', 'cohere', 'databricks', 'amazon', 'x-ai'}:
                 # OpenRouter setup
-                api_key = os.environ.get('OPENROUTER_API_KEY')
-                if not api_key:
-                    raise ValueError("Please set the OPENROUTER_API_KEY environment variable for OpenRouter models")
+                api_key = _get_resolved_api_key('OPENROUTER_API_KEY', 'OpenRouter')
                 self.client = openai.OpenAI(
                     api_key=api_key,
                     base_url="https://openrouter.ai/api/v1"
@@ -100,9 +278,7 @@ class Agent:
             # Other models with "/" are DeepInfra models (e.g., "deepseek-ai/DeepSeek-R1-0528-Turbo")
             elif '/' in model_name:
                 # DeepInfra setup
-                api_key = os.environ.get('DEEPINFRA_TOKEN')
-                if not api_key:
-                    raise ValueError("Please set the DEEPINFRA_TOKEN environment variable for DeepInfra models")
+                api_key = _get_resolved_api_key('DEEPINFRA_TOKEN', 'DeepInfra')
                 self.client = openai.OpenAI(
                     api_key=api_key,
                     base_url="https://api.deepinfra.com/v1/openai"
@@ -111,9 +287,7 @@ class Agent:
                 self.logger.info(f"Using DeepInfra provider for model: {model_name}")
             else:
                 # OpenAI setup (default)
-                api_key = os.environ.get('OPENAI_API_KEY')
-                if not api_key:
-                    raise ValueError("Please set the OPENAI_API_KEY environment variable")
+                api_key = _get_resolved_api_key('OPENAI_API_KEY', 'OpenAI')
                 self.client = openai.OpenAI(api_key=api_key)
                 self.provider = 'openai'
                 self.logger.info(f"Using OpenAI provider for model: {model_name}")
@@ -375,6 +549,7 @@ RESPONSE FORMAT: You MUST respond with ONLY valid JSON containing an actions arr
 }}
 
 CRITICAL: Always include "private_thoughts" at the root level explaining your complete strategy for this turn.
+Return exactly one valid JSON object and nothing else; no explanation, no self-correction, no second attempt, and no markdown code fences.
 
 """
         #What optimal strategy looks like:
@@ -850,7 +1025,8 @@ COOPERATION SCORING GUIDE:
 
 IMPORTANT: In your strategic assessment narrative above, you MUST explain and justify your cooperation scores. Discuss specific behaviors, patterns, and interactions you observed that led to each score. The Executive Committee expects detailed reasoning for your evaluations, not just numbers.
 
-Rate ALL OTHER agents (you'll rate yourself separately as 'self') based on their overall behavior throughout the simulation. Your cooperation scores should align with the behaviors and patterns you describe in your strategic assessment."""
+Rate ALL OTHER agents (you'll rate yourself separately as 'self') based on their overall behavior throughout the simulation. Your cooperation scores should align with the behaviors and patterns you describe in your strategic assessment.
+Return exactly one valid JSON object and nothing else; no explanation, no self-correction, no second attempt, and no markdown code fences."""
         
         try:
             # Call LLM to get the report
@@ -871,7 +1047,13 @@ Rate ALL OTHER agents (you'll rate yourself separately as 'self') based on their
             report_text = report_text.strip()
             
             try:
-                report_data = json.loads(report_text)
+                try:
+                    report_data = json.loads(report_text)
+                except json.JSONDecodeError:
+                    extracted_json = _extract_first_balanced_json_object(report_text)
+                    if not extracted_json:
+                        raise
+                    report_data = json.loads(extracted_json)
                 
                 # Basic structure validation
                 if not isinstance(report_data, dict):
@@ -1104,13 +1286,9 @@ Rate ALL OTHER agents (you'll rate yourself separately as 'self') based on their
             try:
                 data = json.loads(cleaned)
             except json.JSONDecodeError:
-                # Try to find JSON object in the response
-                start_idx = cleaned.find('{')
-                end_idx = cleaned.rfind('}') + 1
-                
-                if start_idx != -1 and end_idx > start_idx:
-                    json_str = cleaned[start_idx:end_idx]
-                    data = json.loads(json_str)
+                extracted_json = _extract_first_balanced_json_object(cleaned)
+                if extracted_json:
+                    data = json.loads(extracted_json)
                 else:
                     self.logger.warning(f"No JSON found in response: {response}")
                     return []
@@ -1273,13 +1451,9 @@ Rate ALL OTHER agents (you'll rate yourself separately as 'self') based on their
             try:
                 action = json.loads(cleaned)
             except json.JSONDecodeError:
-                # Try to find JSON object in the response
-                start_idx = cleaned.find('{')
-                end_idx = cleaned.rfind('}') + 1
-                
-                if start_idx != -1 and end_idx > start_idx:
-                    json_str = cleaned[start_idx:end_idx]
-                    action = json.loads(json_str)
+                extracted_json = _extract_first_balanced_json_object(cleaned)
+                if extracted_json:
+                    action = json.loads(extracted_json)
                 else:
                     self.logger.warning(f"No JSON found in response: {response}")
                     return None
@@ -1697,6 +1871,7 @@ RESPONSE FORMAT: You MUST respond with ONLY valid JSON containing an actions arr
 }}
 
 CRITICAL: Always include "private_thoughts" at the root level explaining your complete strategy for this turn.
+Return exactly one valid JSON object and nothing else; no explanation, no self-correction, no second attempt, and no markdown code fences.
 
 """
         

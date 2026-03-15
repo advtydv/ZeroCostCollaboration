@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.DS_Store
+analysis/
+experiments/
+experiments_from_sid/
+information_asymmetry_simulation/logs/
+information_asymmetry_simulation_automated/logs/

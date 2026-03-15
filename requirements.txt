@@ -1,0 +1,2 @@
+-r information_asymmetry_simulation/requirements.txt
+-r information_asymmetry_simulation_automated/requirements.txt

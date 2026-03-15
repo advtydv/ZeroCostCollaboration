@@ -24,9 +24,9 @@ AUTO_REQUEST_CONFIG = "information_asymmetry_simulation_automated/config_automat
 AUTO_FULFILL_CONFIG = "information_asymmetry_simulation_automated/config_automated_fulfill.yaml"
 
 MODEL_SHORTCUTS = {
-    "gpt52": "gpt-5.2-2025-12-11",
-    "gpt5_2": "gpt-5.2-2025-12-11",
-    "gpt-5.2": "gpt-5.2-2025-12-11",
+    "gpt54": "gpt-5.4-2026-03-05",
+    "gpt5_4": "gpt-5.4-2026-03-05",
+    "gpt-5.4": "gpt-5.4-2026-03-05",
     "claudeopus46": "claude-opus-4-6",
     "opus46": "claude-opus-4-6",
     "claude-opus-4.6": "claude-opus-4-6",
@@ -205,7 +205,7 @@ def main() -> int:
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["claudeopus46", "gpt52"],
+        default=["claudeopus46", "gpt54"],
         help="Model shortcuts or full model IDs for baseline/automation/intervention runs",
     )
     parser.add_argument("--runs", type=int, default=5, help="Runs per experiment (default: 5)")

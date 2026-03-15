@@ -3,7 +3,7 @@ Useful options:
 python run_paper_experiments.py --dry-run
 python run_paper_experiments.py --runs 3
 python run_paper_experiments.py --continue-on-error
-python run_paper_experiments.py --models claudeopus46 gpt52
+python run_paper_experiments.py --models claudeopus46 gpt54
 ```
 
 ## Exact config changes per experiment
@@ -84,7 +84,7 @@ Regular baseline (example model):
 ```bash
 python run_agent_types_experiments.py \
   --neutral 10 \
-  --model gpt52 \
+  --model gpt54 \
   --config information_asymmetry_simulation/config.yaml \
   --simulation-root information_asymmetry_simulation \
   --output-dir paper_regular_baseline
@@ -94,7 +94,7 @@ Automated request:
 ```bash
 python run_agent_types_experiments.py \
   --neutral 10 \
-  --model gpt52 \
+  --model gpt54 \
   --config information_asymmetry_simulation_automated/config_automated_request.yaml \
   --simulation-root information_asymmetry_simulation_automated \
   --output-dir paper_auto_request
@@ -104,7 +104,7 @@ Automated fulfill:
 ```bash
 python run_agent_types_experiments.py \
   --neutral 10 \
-  --model gpt52 \
+  --model gpt54 \
   --config information_asymmetry_simulation_automated/config_automated_fulfill.yaml \
   --simulation-root information_asymmetry_simulation_automated \
   --output-dir paper_auto_fulfill
@@ -114,7 +114,7 @@ Policy intervention:
 ```bash
 python run_agent_types_experiments.py \
   --policy 10 \
-  --model gpt52 \
+  --model gpt54 \
   --config information_asymmetry_simulation/config.yaml \
   --simulation-root information_asymmetry_simulation \
   --output-dir paper_intervention_policy
@@ -124,7 +124,7 @@ Incentive intervention:
 ```bash
 python run_agent_types_experiments.py \
   --neutral 10 \
-  --model gpt52 \
+  --model gpt54 \
   --config information_asymmetry_simulation/config.yaml \
   --simulation-root information_asymmetry_simulation \
   --sharing-incentive 1000 \
@@ -135,7 +135,7 @@ Visibility intervention:
 ```bash
 python run_agent_types_experiments.py \
   --neutral 10 \
-  --model gpt52 \
+  --model gpt54 \
   --config information_asymmetry_simulation/config.yaml \
   --simulation-root information_asymmetry_simulation \
   --revenue limited \
