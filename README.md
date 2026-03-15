@@ -14,6 +14,7 @@ pip install -r requirements.txt
 ```
 
 3. Export API credentials.
+For the standard paper experiments in this repo, only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are required. `OPENROUTER_API_KEY` and `DEEPINFRA_TOKEN` are only needed if you want to run Gemini/OpenRouter or DeepSeek/DeepInfra models manually.
 Raw provider keys work, and AWS Secrets Manager references also work if the runtime has AWS credentials that can read those secrets:
 ```bash
 export OPENAI_API_KEY="..."
