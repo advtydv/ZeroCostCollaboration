@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import random
+import re
 import shutil
 import subprocess
 from typing import Dict, List, Any, Optional
@@ -193,6 +194,40 @@ def _extract_first_balanced_json_object(text: str) -> Optional[str]:
                 return text[start_idx:idx + 1]
 
     return None
+
+
+_INVALID_JSON_ESCAPE_RE = re.compile(r'\\(?!["\\/bfnrtu])')
+
+
+def _repair_invalid_json_escapes(text: str) -> str:
+    """Double stray backslashes so nearly-valid model JSON can still be parsed."""
+    return _INVALID_JSON_ESCAPE_RE.sub(r"\\\\", text)
+
+
+def _load_model_json_object(text: str) -> Any:
+    """Parse a JSON object from model output, with light repair for stray escapes."""
+    candidates = [text]
+    extracted_json = _extract_first_balanced_json_object(text)
+    if extracted_json and extracted_json not in candidates:
+        candidates.append(extracted_json)
+
+    last_error = None
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+
+        repaired = _repair_invalid_json_escapes(candidate)
+        if repaired != candidate:
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise ValueError("No JSON object found in model response")
 
 
 class Agent:
@@ -1061,13 +1096,7 @@ Return exactly one valid JSON object and nothing else; no explanation, no self-c
             report_text = report_text.strip()
             
             try:
-                try:
-                    report_data = json.loads(report_text)
-                except json.JSONDecodeError:
-                    extracted_json = _extract_first_balanced_json_object(report_text)
-                    if not extracted_json:
-                        raise
-                    report_data = json.loads(extracted_json)
+                report_data = _load_model_json_object(report_text)
                 
                 # Basic structure validation
                 if not isinstance(report_data, dict):
@@ -1296,16 +1325,11 @@ Return exactly one valid JSON object and nothing else; no explanation, no self-c
                 cleaned = cleaned[:-3]  # Remove trailing ```
             cleaned = cleaned.strip()
             
-            # Try to parse as direct JSON first
             try:
-                data = json.loads(cleaned)
-            except json.JSONDecodeError:
-                extracted_json = _extract_first_balanced_json_object(cleaned)
-                if extracted_json:
-                    data = json.loads(extracted_json)
-                else:
-                    self.logger.warning(f"No JSON found in response: {response}")
-                    return []
+                data = _load_model_json_object(cleaned)
+            except (json.JSONDecodeError, ValueError) as exc:
+                self.logger.warning(f"Could not parse JSON response ({exc}): {response}")
+                return []
             
             # Extract actions array and private thoughts
             if not isinstance(data, dict):
@@ -1464,16 +1488,11 @@ Return exactly one valid JSON object and nothing else; no explanation, no self-c
                 cleaned = cleaned[:-3]  # Remove trailing ```
             cleaned = cleaned.strip()
             
-            # Try to parse as direct JSON first
             try:
-                action = json.loads(cleaned)
-            except json.JSONDecodeError:
-                extracted_json = _extract_first_balanced_json_object(cleaned)
-                if extracted_json:
-                    action = json.loads(extracted_json)
-                else:
-                    self.logger.warning(f"No JSON found in response: {response}")
-                    return None
+                action = _load_model_json_object(cleaned)
+            except (json.JSONDecodeError, ValueError) as exc:
+                self.logger.warning(f"Could not parse JSON response ({exc}): {response}")
+                return None
             
             # Validate action structure
             if not isinstance(action, dict):
