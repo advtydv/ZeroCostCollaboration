@@ -44,3 +44,26 @@ This runs:
 ```bash
 python run_paper_experiments.py
 ```
+
+## Prompting ablation rebuttal runs
+
+To run the rebuttal prompt-ablation matrix, use:
+
+```bash
+python3 run_prompt_ablations.py
+```
+
+This launches all 27 prompt-ablation runs:
+- 3 models: Claude Sonnet 4, O3-mini, and O3
+- 3 prompt ablations: A, B, and C
+- 3 seeds per model/ablation
+
+Outputs are written under:
+
+```text
+experiments/prompt_ablations/<model>/<a|b|c>/run_###
+```
+
+Before launching, make sure the environment is set up and that `OPENAI_API_KEY`
+and `ANTHROPIC_API_KEY` are available, either directly or via supported AWS
+Secrets Manager references.
