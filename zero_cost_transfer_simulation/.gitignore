@@ -1,0 +1,5 @@
+__pycache__/
+simulation/__pycache__/
+logs/
+test_runs/
+experiments/

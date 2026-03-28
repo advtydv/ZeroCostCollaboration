@@ -67,3 +67,27 @@ experiments/prompt_ablations/<model>/<a|b|c>/run_###
 Before launching, make sure the environment is set up and that `OPENAI_API_KEY`
 and `ANTHROPIC_API_KEY` are available, either directly or via supported AWS
 Secrets Manager references.
+
+## Zero-cost environment batch runs
+
+To run the current zero-cost environment matrix, use:
+
+```bash
+python3 run_zero_cost_transfer_experiments.py --experiment-name zero_cost_current_env_main
+```
+
+This launches:
+- 3 models: O3-mini, Claude Sonnet 4, and O3
+- 3 seeds per model
+- the 3 seeds for each model in parallel
+
+Outputs are written under:
+
+```text
+experiments/zero_cost_current_env_main/<model>/run_###
+```
+
+The runner performs a preflight validation first, uses the shared config at
+`zero_cost_transfer_simulation/config.yaml`, and only changes model and seed
+between runs. Re-running the same command resumes automatically by skipping runs
+that already completed successfully.

@@ -1,0 +1,98 @@
+# Information Asymmetry Simulation Configuration - Mixed Mode
+# This configuration runs 1 LLM agent with the rest as perfect agents
+
+simulation:
+  rounds: 20
+  agents: 10
+  show_full_revenue: true  # If true, agents see all revenue. If false, only their own revenue position.
+  report_frequency: 0  # Request strategic reports every N rounds (0 to disable)
+  
+agents:
+  # Mixed mode configuration
+  mode: "mixed"  # "llm", "perfect", or "mixed" for per-agent configuration
+  
+  # Per-agent mode specification (only used when mode is "mixed")
+  # You can specify which agents should be LLM vs perfect
+  agent_modes:
+    agent_1: "llm"      # This agent will use LLM
+    agent_2: "perfect"  # Rest will be perfect
+    agent_3: "perfect"
+    agent_4: "perfect"
+    agent_5: "perfect"
+    agent_6: "perfect"
+    agent_7: "perfect"
+    agent_8: "perfect"
+    agent_9: "perfect"
+    agent_10: "perfect"
+    # Any unspecified agents default to perfect
+  
+  # LLM configuration (for LLM agents)
+  model: "o3-mini-2025-01-31"  # Model for the LLM agent(s) o3-mini-2025-01-31 gpt-4.1-mini-2025-04-14 next with gpt-4.1
+  uncooperative_count: 0  # Can still specify agent types for LLM agents
+  competitive_count: 0
+  
+  # Perfect agent configuration (for perfect agents)
+  perfect_strategy:
+    request_strategy: "all"  # Request from all holders of needed information
+    response_delay: 0  # Respond to requests immediately
+    submission_delay: 0  # Submit tasks immediately when ready
+  
+tasks:
+  # Task configuration
+  min_info_pieces: 4  # Minimum information pieces needed for a task
+  max_info_pieces: 4  # Maximum information pieces needed for a task
+  initial_tasks_per_agent: 2
+  new_task_on_completion: true
+  structured_packet_tasks: true
+  owner_anchored_tasks: true
+  distinct_external_holders: true
+  
+  # Task examples (can be expanded)
+  task_templates:
+    - "Assemble the assigned handoff packet using {info_pieces}"
+    - "Prepare the delivery authorization using {info_pieces}"
+    - "Finalize the execution bundle from {info_pieces}"
+    - "Complete the field operations brief with {info_pieces}"
+    - "Validate the dispatch package using {info_pieces}"
+  
+information:
+  # Information distribution
+  total_pieces: 80  # Total unique information pieces
+  pieces_per_agent: 8  # How many pieces each agent starts with
+  balanced_category_pool: true
+  balanced_category_distribution: true
+  
+  # Distribution mode
+  unique_distribution: false  # If true, each piece exists exactly once (no duplicates)
+                              # If false, pieces can be held by multiple agents (1-3 copies)
+  
+  # Information examples
+  info_templates:
+    - "Shipment batch {n} manifest"
+    - "Vendor {n} compliance memo"
+    - "Unit {n} calibration record"
+    - "Site {n} inventory snapshot"
+    - "Route {n} handoff code"
+  info_categories:
+    - "manifest"
+    - "compliance"
+    - "calibration"
+    - "inventory"
+    - "handoff"
+  
+revenue:
+  # Revenue (in dollars) for different actions
+  task_completion: 10000  # $10,000 base revenue per task
+  bonus_for_first: 2000  # $2,000 bonus for completing a task first in a round
+  incorrect_value_penalty: 0.5  # Revenue reduction for submitting tasks with incorrect information values
+  
+communication:
+  # Action limit per turn (set to -1 for unlimited)
+  # This limits the total number of actions an agent can take in their turn
+  max_actions_per_turn: -1
+  
+logging:
+  # What to log
+  log_all_messages: true
+  log_agent_reasoning: true  # Both LLM and perfect agents will log their reasoning
+  log_task_attempts: true
