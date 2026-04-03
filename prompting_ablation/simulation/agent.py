@@ -9,6 +9,7 @@ import random
 import re
 import shutil
 import subprocess
+import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from collections import defaultdict
@@ -197,11 +198,32 @@ def _extract_first_balanced_json_object(text: str) -> Optional[str]:
 
 
 _INVALID_JSON_ESCAPE_RE = re.compile(r'\\(?!["\\/bfnrtu])')
+_RATE_LIMIT_WAIT_RE = re.compile(r"Please try again in ([0-9.]+)s")
 
 
 def _repair_invalid_json_escapes(text: str) -> str:
     """Double stray backslashes so nearly-valid model JSON can still be parsed."""
     return _INVALID_JSON_ESCAPE_RE.sub(r"\\\\", text)
+
+
+def _extract_retry_wait_seconds(error: Exception) -> float:
+    """Pull retry timing hints from OpenAI-compatible rate-limit errors when available."""
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    retry_after = headers.get("retry-after") or headers.get("Retry-After")
+    if retry_after:
+        try:
+            return float(retry_after)
+        except ValueError:
+            pass
+
+    match = _RATE_LIMIT_WAIT_RE.search(str(error))
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+    return 5.0
 
 
 def _load_model_json_object(text: str) -> Any:
@@ -349,6 +371,38 @@ class Agent:
             )
         )
 
+    def _call_openai_chat_with_backoff(self, model: str, messages: List[Dict[str, str]]) -> str:
+        """Retry transient OpenAI-compatible API failures instead of aborting immediately."""
+        max_attempts = int(self.config.get('api_max_attempts', 8))
+        base_wait = float(self.config.get('api_retry_base_wait', 2.0))
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=model,
+                    messages=messages
+                )
+                content = response.choices[0].message.content
+                return content.strip() if isinstance(content, str) else ""
+            except openai.RateLimitError as exc:
+                if attempt == max_attempts:
+                    raise
+                wait_seconds = _extract_retry_wait_seconds(exc) + 0.5
+                self.logger.warning(
+                    f"Rate limit for model {model}; sleeping {wait_seconds:.2f}s before retry "
+                    f"({attempt}/{max_attempts})"
+                )
+                time.sleep(wait_seconds)
+            except (openai.InternalServerError, openai.APIConnectionError, openai.APITimeoutError) as exc:
+                if attempt == max_attempts:
+                    raise
+                wait_seconds = min(base_wait * (2 ** (attempt - 1)), 30.0)
+                self.logger.warning(
+                    f"Transient API error for model {model}: {exc}. Sleeping {wait_seconds:.2f}s before retry "
+                    f"({attempt}/{max_attempts})"
+                )
+                time.sleep(wait_seconds)
+
     def _call_llm(self, messages: List[Dict[str, str]], model: str = None) -> str:
         """Unified interface for calling LLM APIs across different providers.
 
@@ -396,12 +450,8 @@ class Agent:
                     return response.content[0].text if hasattr(response.content[0], 'text') else str(response.content[0])
                 return ""
             else:
-                # OpenAI/DeepInfra compatible API call
-                response = self.client.chat.completions.create(
-                    model=model,
-                    messages=messages
-                )
-                return response.choices[0].message.content.strip()
+                # OpenAI-compatible providers share the same retry/backoff path
+                return self._call_openai_chat_with_backoff(model=model, messages=messages)
         except Exception as e:
             self.logger.error(f"LLM API call failed for provider {self.provider}: {e}")
             raise
@@ -720,14 +770,16 @@ Return exactly one valid JSON object and nothing else; no explanation, no self-c
         return ""  # Return empty string when exchanges are not visible
     
     def _format_sharing_incentive(self) -> str:
-        """Format information sharing incentive if configured"""
+        """Format task-completion and information-sharing incentives."""
         # Get the configured sharing reward from revenue config
         revenue_config = self.simulation_manager.config.get('revenue', {}) if self.simulation_manager else {}
         sharing_reward = revenue_config.get('information_sharing', 0)
+        task_completion_reward = revenue_config.get('task_completion', 10000)
 
+        base_line = f"\n- Task Completion Revenue: Each completed task earns ${task_completion_reward:,}."
         if sharing_reward > 0:
-            return f"\n- Revenue Incentive: You earn ${sharing_reward:,} for each information piece you share with others! Standard task completion revenue is $10,000."
-        return ""
+            return base_line + f"\n- Revenue Incentive: You earn ${sharing_reward:,} for each information piece you share with others!"
+        return base_line
 
     def _format_action_limit_info(self) -> str:
         """Format information about action limits"""
