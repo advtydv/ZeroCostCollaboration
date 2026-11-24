@@ -171,6 +171,11 @@ class InformationManager:
                             )
             else:
                 balanced_category_distribution = False
+        else:
+            # Balanced dealing needs total_pieces == agents * pieces_per_agent
+            # and pieces_per_agent divisible by the number of families; fall
+            # back to the original dealing instead of leaving agents empty.
+            balanced_category_distribution = False
 
         if unique_distribution:
             # Unique mode: each piece exists exactly once
